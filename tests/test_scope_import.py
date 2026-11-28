@@ -105,6 +105,9 @@ class ClassifyTests(unittest.TestCase):
 
     def test_idn_hosts_become_punycode(self):
         self.assertEqual(self.rules("bücher.example")[1], [r"re:^xn--bcher-kva\.example$"])
+        # IDNA 2008 keeps sharp s (DNS/browsers/curl), so the rule must be the
+        # host a request connects to, not the IDNA 2003 "strasse" mapping.
+        self.assertEqual(self.rules("stra\u00dfe.example.com")[1], [r"re:^xn--strae-oqa\.example\.com$"])
 
     def test_ambiguous_entries_go_to_review_never_to_rules(self):
         for raw, typ in (("<your-tenant>.example.com", "URL"), ("app[.staging].example.com", "website"),

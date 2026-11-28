@@ -36,6 +36,7 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -150,11 +151,29 @@ def _one_line(text, limit=140):
     return s if len(s) <= limit else s[:limit - 1].rstrip() + "…"
 
 
+# IDNA 2008 deviation characters (sharp s, final sigma, ZWNJ, ZWJ): the built-in
+# IDNA 2003 codec maps them away, but DNS, browsers, curl and requests keep them,
+# so a label holding one is punycoded as written (same rule as engine/scope.py).
+_IDNA_DEVIATIONS = frozenset("\u00df\u03c2\u200c\u200d")
+
+
 def _idna(host):
     if host.isascii():
         return host
     try:
-        return host.encode("idna").decode("ascii")
+        folded = unicodedata.normalize("NFKC", host).lower()
+        if not _IDNA_DEVIATIONS.intersection(folded):
+            return host.encode("idna").decode("ascii")
+        labels = []
+        for label in re.split("[.\u3002\uff0e\uff61]", folded):
+            if label and _IDNA_DEVIATIONS.intersection(label):
+                label = "xn--" + label.encode("punycode").decode("ascii")
+                if len(label) > 63:
+                    raise UnicodeError("label too long")
+            else:
+                label = label.encode("idna").decode("ascii")
+            labels.append(label)
+        return ".".join(labels)
     except UnicodeError:
         return host
 

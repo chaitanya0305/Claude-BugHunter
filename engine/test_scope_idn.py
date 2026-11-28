@@ -43,6 +43,22 @@ class IdnCanonicalizationTests(unittest.TestCase):
         self.assertFalse(s.in_scope_host("https://" + bad + "/"))
         self.assertEqual(s.reject_reason("https://" + bad + "/"), "could not parse host")
 
+    def test_idna2008_deviation_characters_match_the_connect_host(self):
+        # Sharp s / final sigma are kept by IDNA 2008 (DNS, browsers, curl,
+        # requests): stra\u00dfe.example.com connects to xn--strae-oqa.example.com,
+        # not strasse.example.com as the IDNA 2003 codec says. A deny rule in
+        # either spelling must reject both, and must not hit strasse.example.com.
+        uni, puny = "stra\u00dfe.example.com", "xn--strae-oqa.example.com"
+        self.assertEqual(_normalize_rule(uni), puny)
+        self.assertEqual(_normalize_rule("STRA\u1e9eE.example.com"), puny)
+        self.assertEqual(_normalize_rule("\u03b1\u03c2.example.com"), "xn--mxa8a.example.com")
+        for deny in (uni, puny, "re:^xn--strae-oqa\\.example\\.com$"):
+            with self.subTest(deny=deny):
+                s = Scope(in_scope=["*.example.com"], out_of_scope=[deny])
+                self.assertFalse(s.in_scope_host("https://" + uni + "/admin"))
+                self.assertFalse(s.in_scope_host("https://" + puny + "/admin"))
+                self.assertTrue(s.in_scope_host("https://strasse.example.com/"))
+
 
 if __name__ == "__main__":
     unittest.main()

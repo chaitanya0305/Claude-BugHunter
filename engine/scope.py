@@ -18,6 +18,7 @@ Pattern forms (matched against the URL's host):
 import functools
 import ipaddress
 import re
+import unicodedata
 from urllib.parse import urlparse
 
 
@@ -29,6 +30,15 @@ def _regex(pattern):
     return re.compile(pattern, re.IGNORECASE)
 
 
+# IDNA 2008 "deviation" characters (sharp s, final sigma, ZWNJ, ZWJ). Python's
+# built-in `idna` codec is IDNA 2003 and maps them away (strasse for sharp s,
+# sigma for final sigma, joiners dropped), but DNS names, browsers, curl and
+# requests (via the `idna` package) use IDNA 2008 / UTS #46 non-transitional and
+# keep them: "stra\u00dfe.example.com" connects to xn--strae-oqa.example.com, a
+# different host from strasse.example.com.
+_IDNA_DEVIATIONS = frozenset("\u00df\u03c2\u200c\u200d")
+
+
 def _to_alabel(host):
     """Canonicalize an IDN host to its IDNA A-label (punycode). ASCII passes
     through byte-identical; an un-encodable host returns None so callers can
@@ -37,7 +47,21 @@ def _to_alabel(host):
     if not host or host.isascii():
         return host
     try:
-        return host.encode("idna").decode("ascii")
+        folded = unicodedata.normalize("NFKC", host).lower()   # capital sharp s -> sharp s
+        if not _IDNA_DEVIATIONS.intersection(folded):
+            return host.encode("idna").decode("ascii")
+        # A label with a deviation character is encoded the IDNA 2008 way (kept,
+        # not mapped), so the A-label matches the host a request connects to.
+        labels = []
+        for label in re.split("[.\u3002\uff0e\uff61]", folded):
+            if label and _IDNA_DEVIATIONS.intersection(label):
+                label = "xn--" + label.encode("punycode").decode("ascii")
+                if len(label) > 63:
+                    raise UnicodeError("label too long")
+            else:
+                label = label.encode("idna").decode("ascii")
+            labels.append(label)
+        return ".".join(labels)
     except UnicodeError:
         return None
 
