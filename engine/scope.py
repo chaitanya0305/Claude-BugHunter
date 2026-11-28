@@ -71,6 +71,13 @@ def _host_of(target):
         return str(ipaddress.ip_address(host.split("%")[0]))
     except ValueError:
         pass
+    # Fail closed on a percent-encoded host: urlparse keeps `%69` as-is, but
+    # requests/urllib3, urllib and curl decode it, so `adm%69n.example.com`
+    # matched the in-scope `example.com` rule here while the request connects to
+    # the excluded `admin.example.com`. A '%' is never valid in a DNS name (an
+    # IPv6 %zone was handled above), so drop the host and let default-deny apply.
+    if "%" in host:
+        return ""
     # Fail closed: an un-encodable IDN host is dropped so it matches nothing and
     # default-deny keeps it out of scope.
     return _to_alabel(host) or ""
